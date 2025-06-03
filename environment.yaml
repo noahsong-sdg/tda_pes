@@ -1,0 +1,13 @@
+name: tda_pes
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.9
+  - numpy
+  - matplotlib
+  - scipy
+  - pip
+  - pip:
+    - pyscf
+    - gudhi
