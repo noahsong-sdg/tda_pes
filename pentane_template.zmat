@@ -1,0 +1,17 @@
+C
+C   1  {R_CC}
+H   1  {R_CH}   2  {A_CCH}
+H   1  {R_CH}   2  {A_CCH}   3  {D_HCH_OFFSET}
+H   1  {R_CH}   2  {A_CCH}   3  {-D_HCH_OFFSET}
+C   2  {R_CC}   1  {A_CCC}   3  {D_TRANS}
+H   2  {R_CH}   6  {A_CCH}   1  {D_HCH_OFFSET}
+H   2  {R_CH}   6  {A_CCH}   1  {-D_HCH_OFFSET}
+C   6  {R_CC}   2  {A_CCC}   1  {D_TRANS}
+H   6  {R_CH}   9  {A_CCH}   2  {D_HCH_OFFSET}
+H   6  {R_CH}   9  {A_CCH}   2  {-D_HCH_OFFSET}
+C   9  {R_CC}   6  {A_CCC}   2  {dihedral_angle}
+H   9  {R_CH}  12  {A_CCH}   6  {D_HCH_OFFSET}
+H   9  {R_CH}  12  {A_CCH}   6  {-D_HCH_OFFSET}
+H  12  {R_CH}   9  {A_CCH}   6  {D_TRANS}
+H  12  {R_CH}   9  {A_CCH}  15  {D_HCH_OFFSET}
+H  12  {R_CH}   9  {A_CCH}  15  {-D_HCH_OFFSET}
