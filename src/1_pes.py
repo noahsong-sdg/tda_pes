@@ -64,7 +64,6 @@ def get_default_variable_values(variables):
                 defaults[var] = 1.5  # Generic bond length
         else:
             defaults[var] = 0.0  # Default for unknown variables
-    
     return defaults
 
 def print_coordinates(coords, variable_values, energy):
