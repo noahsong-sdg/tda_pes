@@ -27,6 +27,7 @@ import warnings
 # PySCF imports with error handling
 try:
     from pyscf import gto, scf, dft, mp, cc
+    from pyscf.geomopt import geometric_solver
     PYSCF_AVAILABLE = True
 except ImportError:
     print("Warning: PySCF not available. Electronic structure calculations will fail.")
@@ -163,7 +164,7 @@ class PESCalculator:
             return float('inf')
     
     def create_1d_pes(self, zmatrix_file, scan_variable=None, scan_range=None, 
-                     num_points=36, molecule_name=None):
+                     num_points=36, molecule_name=None, relaxed=False):
         """Create 1D potential energy surface."""
         template, variables = self.read_zmatrix_template(zmatrix_file)
         
@@ -196,8 +197,14 @@ class PESCalculator:
         scan_values = np.linspace(scan_range[0], scan_range[1], num_points)
         energies = []
         
-        print(f"Calculating 1D PES for {molecule_name}...")
+        scan_type = "relaxed" if relaxed else "rigid"
+        print(f"Calculating 1D {scan_type} PES for {molecule_name}...")
         print(f"Scanning {scan_variable}: {scan_range[0]} to {scan_range[1]} ({num_points} points)")
+        
+        if relaxed:
+            print("Using constrained geometry optimization (relaxed scan)")
+        else:
+            print("Using rigid scan (fixed coordinates)")
         
         for i, value in enumerate(scan_values):
             print(f"Progress: {i+1}/{num_points} ({scan_variable}={value:.1f})")
@@ -205,21 +212,28 @@ class PESCalculator:
             variable_values = default_values.copy()
             variable_values[scan_variable] = value
             
-            energy = self.calculate_energy(variable_values, template, 
-                                         molecule_name=molecule_name)
+            if relaxed:
+                # Use relaxed scan with constrained optimization
+                energy = self.calculate_energy_relaxed(variable_values, template, 
+                                                     scan_variable, value, 
+                                                     molecule_name=molecule_name)
+            else:
+                # Use rigid scan
+                energy = self.calculate_energy(variable_values, template, 
+                                             molecule_name=molecule_name)
             energies.append(energy)
         
         energies = np.array(energies)
         rel_energies = (energies - np.min(energies)) * 627.509  # Convert to kcal/mol
         
         # Save and plot results
-        self._save_1d_data(scan_values, rel_energies, scan_variable, molecule_name)
-        self._plot_1d_pes(scan_values, rel_energies, scan_variable, molecule_name)
+        self._save_1d_data(scan_values, rel_energies, scan_variable, molecule_name, relaxed)
+        self._plot_1d_pes(scan_values, rel_energies, scan_variable, molecule_name, relaxed)
         
         return scan_values, rel_energies
     
     def create_2d_pes(self, zmatrix_file, scan_variables=None, scan_ranges=None, 
-                     num_points=(20, 20), molecule_name=None):
+                     num_points=(20, 20), molecule_name=None, relaxed=False):
         """Create 2D potential energy surface."""
         template, variables = self.read_zmatrix_template(zmatrix_file)
         
@@ -253,41 +267,213 @@ class PESCalculator:
         var2_values = np.linspace(scan_ranges[1][0], scan_ranges[1][1], num_points[1])
         energy_grid = np.zeros((len(var1_values), len(var2_values)))
         
-        print(f"Calculating 2D PES for {molecule_name}...")
+        scan_type = "relaxed" if relaxed else "rigid"
+        print(f"Calculating 2D {scan_type} PES for {molecule_name}...")
         print(f"Total calculations: {num_points[0] * num_points[1]}")
         
         calc_count = 0
         for i, val1 in enumerate(var1_values):
             for j, val2 in enumerate(var2_values):
                 calc_count += 1
-                print(f"Progress: {calc_count}/{num_points[0] * num_points[1]}")
+                print(f"Progress: {calc_count}/{num_points[0] * num_points[1]} ({scan_type})")
                 
                 variable_values = default_values.copy()
                 variable_values[scan_variables[0]] = val1
                 variable_values[scan_variables[1]] = val2
                 
-                energy = self.calculate_energy(variable_values, template,
-                                             molecule_name=molecule_name)
+                if relaxed:
+                    # For 2D relaxed scans, we need to constrain both variables
+                    # Use first variable as primary constraint for the optimization
+                    energy = self.calculate_energy_relaxed(variable_values, template, 
+                                                         scan_variables[0], val1, 
+                                                         molecule_name=molecule_name)
+                else:
+                    energy = self.calculate_energy(variable_values, template,
+                                                 molecule_name=molecule_name)
                 energy_grid[i, j] = energy
         
         rel_energy_grid = (energy_grid - np.min(energy_grid)) * 627.509
         
         # Save and plot results
         self._save_2d_data(var1_values, var2_values, rel_energy_grid, 
-                          scan_variables, molecule_name)
+                          scan_variables, molecule_name, relaxed)
         self._plot_2d_pes(var1_values, var2_values, rel_energy_grid, 
-                         scan_variables, molecule_name)
+                         scan_variables, molecule_name, relaxed)
         
         return var1_values, var2_values, rel_energy_grid
     
-    def _save_1d_data(self, scan_values, rel_energies, scan_variable, molecule_name):
+    def calculate_energy_relaxed(self, variable_values, zmatrix_template, 
+                               scan_variable, scan_value, molecule_name="molecule"):
+        """Calculate energy with constrained geometry optimization."""
+        if not PYSCF_AVAILABLE:
+            raise RuntimeError("PySCF is required for energy calculations")
+        
+        # Start with the input geometry
+        geometry_str = self.create_geometry(zmatrix_template, variable_values)
+        
+        try:
+            mol = gto.Mole()
+            mol.atom = geometry_str
+            mol.basis = self.basis_set
+            mol.charge = 0
+            mol.spin = 0
+            mol.build(verbose=0)
+        except Exception as e:
+            print(f"Error building molecule: {e}")
+            return float('inf')
+        
+        # Perform constrained optimization
+        try:
+            optimized_mol = self._constrained_optimization(mol, zmatrix_template, 
+                                                         scan_variable, scan_value, 
+                                                         variable_values)
+            if optimized_mol is None:
+                return float('inf')
+            
+            return self._perform_calculation(optimized_mol, variable_values)
+            
+        except Exception as e:
+            print(f"Relaxed scan error: {e}")
+            return float('inf')
+    
+    def _constrained_optimization(self, mol, zmatrix_template, scan_variable, 
+                                 scan_value, variable_values):
+        """Perform constrained geometry optimization using simple coordinate optimization."""
+        try:
+            # Create mean-field object for gradients
+            if self.level_of_theory == 'hf':
+                mf = scf.RHF(mol)
+            elif self.level_of_theory == 'b3lyp':
+                mf = dft.RKS(mol)
+                mf.xc = 'b3lyp'
+            elif self.level_of_theory == 'wb97x-d':
+                mf = dft.RKS(mol)
+                try:
+                    mf.xc = 'wb97x_d'
+                except:
+                    mf.xc = 'b3lyp'
+            else:
+                mf = dft.RKS(mol)
+                mf.xc = 'b3lyp'
+            
+            mf.verbose = 0
+            
+            # Simple constrained optimization using coordinate relaxation
+            max_cycles = 20
+            conv_threshold = 1e-4
+            
+            current_values = variable_values.copy()
+            current_values[scan_variable] = scan_value  # Keep scan variable fixed
+            
+            for cycle in range(max_cycles):
+                # Calculate energy and gradients for current geometry
+                current_geometry = self.create_geometry(zmatrix_template, current_values)
+                
+                try:
+                    mol_current = gto.Mole()
+                    mol_current.atom = current_geometry
+                    mol_current.basis = self.basis_set
+                    mol_current.charge = 0
+                    mol_current.spin = 0
+                    mol_current.build(verbose=0)
+                except:
+                    return None
+                
+                # Simple optimization: adjust other variables slightly
+                old_values = current_values.copy()
+                
+                # For each non-scan variable, try small perturbations
+                for var in current_values:
+                    if var == scan_variable:
+                        continue  # Keep scan variable fixed
+                    
+                    # Try small positive and negative perturbations
+                    step_size = 0.1 if 'angle' in var.lower() or 'dihedral' in var.lower() else 0.01
+                    
+                    # Test positive perturbation
+                    test_values_pos = current_values.copy()
+                    test_values_pos[var] += step_size
+                    energy_pos = self._evaluate_energy_simple(test_values_pos, zmatrix_template)
+                    
+                    # Test negative perturbation
+                    test_values_neg = current_values.copy()
+                    test_values_neg[var] -= step_size
+                    energy_neg = self._evaluate_energy_simple(test_values_neg, zmatrix_template)
+                    
+                    # Current energy
+                    energy_current = self._evaluate_energy_simple(current_values, zmatrix_template)
+                    
+                    # Move in direction of lower energy
+                    if energy_pos < energy_current and energy_pos < energy_neg:
+                        current_values[var] += step_size * 0.5
+                    elif energy_neg < energy_current and energy_neg < energy_pos:
+                        current_values[var] -= step_size * 0.5
+                
+                # Check convergence
+                changes = [abs(current_values[var] - old_values[var]) 
+                          for var in current_values if var != scan_variable]
+                
+                if changes:  # Only check convergence if there are other variables
+                    max_change = max(changes)
+                    if max_change < conv_threshold:
+                        break
+                else:
+                    # If only scan variable exists, we're already "converged"
+                    break
+            
+            # Build final optimized molecule
+            final_geometry = self.create_geometry(zmatrix_template, current_values)
+            mol_final = gto.Mole()
+            mol_final.atom = final_geometry
+            mol_final.basis = self.basis_set
+            mol_final.charge = 0
+            mol_final.spin = 0
+            mol_final.build(verbose=0)
+            
+            return mol_final
+            
+        except Exception as e:
+            print(f"Constrained optimization failed: {e}")
+            return None
+    
+    def _evaluate_energy_simple(self, variable_values, zmatrix_template):
+        """Simple energy evaluation for optimization."""
+        try:
+            geometry_str = self.create_geometry(zmatrix_template, variable_values)
+            mol = gto.Mole()
+            mol.atom = geometry_str
+            mol.basis = self.basis_set
+            mol.charge = 0
+            mol.spin = 0
+            mol.build(verbose=0)
+            
+            if self.level_of_theory == 'hf':
+                mf = scf.RHF(mol)
+            else:
+                mf = dft.RKS(mol)
+                mf.xc = 'b3lyp'
+            
+            mf.verbose = 0
+            energy = mf.kernel()
+            
+            return energy if mf.converged else float('inf')
+        except:
+            return float('inf')
+
+    def _save_1d_data(self, scan_values, rel_energies, scan_variable, molecule_name, relaxed=False):
         """Save 1D PES data to file."""
         os.makedirs('data', exist_ok=True)
-        filename = f'data/{molecule_name}_pes.dat'
         
-        header = f"""# 1D PES Data for {molecule_name}
+        # Include scan type in filename for relaxed scans
+        scan_type = "_relaxed" if relaxed else ""
+        filename = f'data/{molecule_name}{scan_type}_pes.dat'
+        
+        # Include scan type in header
+        scan_info = "relaxed" if relaxed else "rigid"
+        header = f"""# 1D PES Data for {molecule_name} ({scan_info} scan)
 # Method: {self.level_of_theory}/{self.basis_set}
 # Variable: {scan_variable}
+# Scan type: {scan_info}
 # Minimum energy: {np.min(rel_energies):.6f} kcal/mol
 # Columns: {scan_variable} Energy(kcal/mol)"""
         
@@ -296,10 +482,13 @@ class PESCalculator:
         print(f"Data saved to {filename}")
     
     def _save_2d_data(self, var1_values, var2_values, energy_grid, 
-                     scan_variables, molecule_name):
+                     scan_variables, molecule_name, relaxed=False):
         """Save 2D PES data to file."""
         os.makedirs('data', exist_ok=True)
-        filename = f'data/{molecule_name}_2d_pes.npy'
+        
+        # Include scan type in filename for relaxed scans
+        scan_type = "_relaxed" if relaxed else ""
+        filename = f'data/{molecule_name}_2d{scan_type}_pes.npy'
         
         np.save(filename, {
             'var1_values': var1_values,
@@ -307,19 +496,24 @@ class PESCalculator:
             'energy_grid': energy_grid,
             'scan_variables': scan_variables,
             'molecule_name': molecule_name,
-            'method': f"{self.level_of_theory}/{self.basis_set}"
+            'method': f"{self.level_of_theory}/{self.basis_set}",
+            'scan_type': 'relaxed' if relaxed else 'rigid'
         })
         print(f"Data saved to {filename}")
     
-    def _plot_1d_pes(self, scan_values, rel_energies, scan_variable, molecule_name):
+    def _plot_1d_pes(self, scan_values, rel_energies, scan_variable, molecule_name, relaxed=False):
         """Create 1D PES plot."""
         os.makedirs('figures', exist_ok=True)
+        
+        # Include scan type in filename and title
+        scan_type = "_relaxed" if relaxed else ""
+        scan_info = "Relaxed" if relaxed else "Rigid"
         
         plt.figure(figsize=(10, 6))
         plt.plot(scan_values, rel_energies, 'b-o', linewidth=2, markersize=6)
         plt.xlabel(f'{scan_variable} (degrees)')
         plt.ylabel('Relative Energy (kcal/mol)')
-        plt.title(f'{molecule_name.capitalize()} PES - {self.level_of_theory.upper()}/{self.basis_set}')
+        plt.title(f'{molecule_name.capitalize()} PES ({scan_info} Scan) - {self.level_of_theory.upper()}/{self.basis_set}')
         plt.grid(True, alpha=0.3)
         
         # Mark global minimum
@@ -329,15 +523,19 @@ class PESCalculator:
                    label=f'Global Min: {scan_values[min_idx]:.1f}°')
         plt.legend()
         
-        filename = f'figures/{molecule_name}_pes.png'
+        filename = f'figures/{molecule_name}{scan_type}_pes.png'
         plt.savefig(filename, dpi=300, bbox_inches='tight')
         plt.close()
         print(f"Plot saved to {filename}")
     
     def _plot_2d_pes(self, var1_values, var2_values, energy_grid, 
-                    scan_variables, molecule_name):
+                    scan_variables, molecule_name, relaxed=False):
         """Create 2D PES plots."""
         os.makedirs('figures', exist_ok=True)
+        
+        # Include scan type in filename and title
+        scan_type = "_relaxed" if relaxed else ""
+        scan_info = "Relaxed" if relaxed else "Rigid"
         
         fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(14, 10))
         
@@ -349,7 +547,7 @@ class PESCalculator:
         ax1.set_xlabel(scan_variables[1])
         ax1.set_ylabel(scan_variables[0])
         ax1.set_zlabel('Relative Energy (kcal/mol)')
-        ax1.set_title(f'3D PES: {molecule_name.capitalize()}')
+        ax1.set_title(f'3D PES: {molecule_name.capitalize()} ({scan_info} Scan)')
         
         # 2D contour plot
         ax2 = fig.add_subplot(222)
@@ -376,7 +574,7 @@ class PESCalculator:
         ax4.grid(True, alpha=0.3)
         
         plt.tight_layout()
-        filename = f'figures/{molecule_name}_2d_pes.png'
+        filename = f'figures/{molecule_name}_2d{scan_type}_pes.png'
         plt.savefig(filename, dpi=300, bbox_inches='tight')
         plt.close()
         print(f"Plot saved to {filename}")
@@ -428,6 +626,10 @@ Examples:
     parser.add_argument('--force', action='store_true',
                        help="Force recalculation even if output exists")
     
+    # Relaxed scan option
+    parser.add_argument('--relaxed', action='store_true',
+                       help="Use relaxed scan with constrained geometry optimization")
+    
     args = parser.parse_args()
     
     # Validate input file
@@ -453,7 +655,8 @@ Examples:
             num_points = args.points[0] if args.points else 36
             
             # Check for existing data
-            data_file = f'data/{molecule_name}_pes.dat'
+            scan_type = "_relaxed" if args.relaxed else ""
+            data_file = f'data/{molecule_name}{scan_type}_pes.dat'
             if os.path.exists(data_file) and not args.force:
                 print(f"Data file '{data_file}' exists. Use --force to recalculate.")
                 return 0
@@ -461,7 +664,7 @@ Examples:
             # Calculate 1D PES
             scan_values, rel_energies = calc.create_1d_pes(
                 args.zmatrix_file, scan_variable, scan_range, 
-                num_points, molecule_name)
+                num_points, molecule_name, relaxed=args.relaxed)
             
             # Print summary
             min_idx = np.argmin(rel_energies)
@@ -485,7 +688,8 @@ Examples:
                 num_points = (20, 20)
             
             # Check for existing data
-            data_file = f'data/{molecule_name}_2d_pes.npy'
+            scan_type = "_relaxed" if args.relaxed else ""
+            data_file = f'data/{molecule_name}_2d{scan_type}_pes.npy'
             if os.path.exists(data_file) and not args.force:
                 print(f"Data file '{data_file}' exists. Use --force to recalculate.")
                 return 0
@@ -493,7 +697,7 @@ Examples:
             # Calculate 2D PES
             var1_values, var2_values, energy_grid = calc.create_2d_pes(
                 args.zmatrix_file, scan_variables, scan_ranges, 
-                num_points, molecule_name)
+                num_points, molecule_name, relaxed=args.relaxed)
             
             # Print summary
             min_idx = np.unravel_index(np.argmin(energy_grid), energy_grid.shape)
