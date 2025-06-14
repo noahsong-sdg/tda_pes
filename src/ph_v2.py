@@ -190,18 +190,10 @@ def compute_sublevel_cubical_persistence_1d(angles, energies, metadata):
     """
     Compute persistence using proper sublevel filtration on cubical complex.
     
-    This is the correct approach for studying topology of sublevel sets of 
-    potential energy functions. The key insight is to use the energy values
-    directly as the filtration function on the natural grid structure.
-    
     For molecular PES data:
     - 1D conformational scans → 1D cubical complex
     - 2D conformational scans → 2D cubical complex  
     - Higher dimensions → Higher-dimensional cubical complex
-    
-    References:
-    - GUDHI tutorial: https://github.com/GUDHI/TDA-tutorial/blob/master/Tuto-GUDHI-cubical-complexes.ipynb
-    - Sublevel filtration theory: Studies topology of {x : f(x) ≤ t} as t increases
     """
     print(f"Computing sublevel filtration on 1D cubical complex")
     print(f"Data points: {len(angles)}, Energy range: {np.min(energies):.6f} to {np.max(energies):.6f} Hartree")
@@ -226,8 +218,8 @@ def compute_sublevel_cubical_persistence_1d(angles, energies, metadata):
         persistence = compute_regular_1d_persistence(sorted_energies)
     
     # Apply chemical significance filtering
-    chemical_threshold_hartree = 0.2 / 627.509  # 0.2 kcal/mol → Hartree
-    print(f"Filtering features below {0.2} kcal/mol ({chemical_threshold_hartree:.6f} Hartree)")
+    #chemical_threshold_hartree = 0.2 / 627.509  # 0.2 kcal/mol → Hartree
+    #print(f"Filtering features below {0.2} kcal/mol ({chemical_threshold_hartree:.6f} Hartree)")
     
     filtered_persistence = []
     filtered_count = 0
@@ -239,16 +231,16 @@ def compute_sublevel_cubical_persistence_1d(angles, energies, metadata):
         if dim == 0:
             filtered_persistence.append((dim, (birth, death)))
         # Keep chemically significant H1 features (loops/cycles)
-        elif dim == 1 and persistence_val >= chemical_threshold_hartree:
+        elif dim == 1: #and persistence_val >= chemical_threshold_hartree:
             filtered_persistence.append((dim, (birth, death)))
-        elif dim == 1:
-            filtered_count += 1
+        #elif dim == 1:
+            #filtered_count += 1
         # Keep higher-dimensional features if present
         elif dim >= 2:
             filtered_persistence.append((dim, (birth, death)))
     
-    if filtered_count > 0:
-        print(f"Filtered out {filtered_count} chemically insignificant H1 features")
+    #if filtered_count > 0:
+        #print(f"Filtered out {filtered_count} chemically insignificant H1 features")
     
     h0_count = sum(1 for dim, _ in filtered_persistence if dim == 0)
     h1_count = sum(1 for dim, _ in filtered_persistence if dim == 1)
@@ -261,28 +253,19 @@ def compute_sublevel_cubical_persistence_1d(angles, energies, metadata):
 
 def compute_periodic_1d_persistence(energies):
     """Compute persistence for periodic 1D data using PeriodicCubicalComplex."""
-    try:
-        from gudhi import PeriodicCubicalComplex
+    from gudhi import PeriodicCubicalComplex
         
-        # For 1D periodic data, specify periodicity in first dimension
-        pcc = PeriodicCubicalComplex(
-            dimensions=[len(energies)],
-            top_dimensional_cells=energies,
-            periodic_dimensions=[True]  # First dimension is periodic
-        )
-        
-        persistence = pcc.persistence()
-        print(f"Periodic cubical complex: {pcc.num_simplices()} simplices, dimension {pcc.dimension()}")
-        
-        return persistence
-        
-    except ImportError:
-        print("Warning: PeriodicCubicalComplex not available, falling back to regular complex")
-        return compute_regular_1d_persistence(energies)
-    except Exception as e:
-        print(f"Warning: Periodic computation failed ({e}), falling back to regular complex")
-        return compute_regular_1d_persistence(energies)
-
+    # For 1D periodic data, specify periodicity in first dimension
+    pcc = PeriodicCubicalComplex(
+        dimensions=[len(energies)],
+        top_dimensional_cells=energies,
+        periodic_dimensions=[True]  # First dimension is periodic
+    )
+    
+    persistence = pcc.persistence()
+    print(f"Periodic cubical complex: {pcc.num_simplices()} simplices, dimension {pcc.dimension()}")
+    
+    return persistence
 
 def compute_regular_1d_persistence(energies):
     """Compute persistence for non-periodic 1D data using regular CubicalComplex."""
@@ -540,13 +523,25 @@ def analyze_persistence_with_generators(persistence, energies, simplex_tree=None
                     generator_info['birth_simplex'] = birth_simplex
                     generator_info['death_simplex'] = death_simplex
                     
-                    # Map vertices to chemical angles
+                    # Map birth vertices to chemical angles
                     if birth_simplex and angles is not None:
                         chemical_angles = []
                         for vertex_idx in birth_simplex:
                             if vertex_idx < len(angles):
                                 chemical_angles.append(angles[vertex_idx])
                         generator_info['chemical_angles'] = chemical_angles
+                    
+                    # Map death vertices to chemical angles - these are the "killer" conformations
+                    if death_simplex and angles is not None:
+                        death_angles = []
+                        death_energies = []
+                        for vertex_idx in death_simplex:
+                            if vertex_idx < len(angles):
+                                death_angles.append(angles[vertex_idx])
+                                if vertex_idx < len(energies):
+                                    death_energies.append(energies[vertex_idx])
+                        generator_info['death_angles'] = death_angles
+                        generator_info['death_energies'] = death_energies
             except:
                 pass
         
@@ -562,7 +557,22 @@ def analyze_persistence_with_generators(persistence, energies, simplex_tree=None
             print(f"[H1-{h1_count}] Cycle: birth={birth:.6f}, death={death:.6f}, persistence={persistence_val:.6f}")
             print(f"    Birth energy: {birth*627.509:.2f} kcal/mol")
             if generator_info['chemical_angles']:
-                print(f"    At conformer angles: {[f'{a:.1f}°' for a in generator_info['chemical_angles']]}")
+                print(f"    Cycle born at conformers: {[f'{a:.1f}°' for a in generator_info['chemical_angles']]}")
+            
+            # Show what kills the cycle
+            if death != float('inf') and 'death_angles' in generator_info and generator_info['death_angles']:
+                death_energy_kcal = death * 627.509
+                print(f"    Death energy: {death_energy_kcal:.2f} kcal/mol")
+                print(f"    Cycle KILLED by conformers: {[f'{a:.1f}°' for a in generator_info['death_angles']]}")
+                
+                # Find the highest energy "killer" conformation
+                if 'death_energies' in generator_info and generator_info['death_energies']:
+                    max_death_energy = max(generator_info['death_energies'])
+                    max_death_idx = generator_info['death_energies'].index(max_death_energy)
+                    killer_angle = generator_info['death_angles'][max_death_idx]
+                    print(f"    Primary killer: {killer_angle:.1f}° at {max_death_energy*627.509:.2f} kcal/mol")
+            elif death == float('inf'):
+                print(f"    Cycle persists to infinite energy (never killed)")
     
     return generators_info
 
@@ -585,8 +595,10 @@ def create_essential_plots(angles, energies, persistence, simplex_tree=None, out
     ax1.plot(angles, energies, 'k-', linewidth=2, alpha=0.7, label='PES')
     ax1.scatter(angles, energies, c='gray', s=30, alpha=0.6, zorder=3)
     
-    # Highlight generators
+    # Highlight generators and cycle killers
     h1_generator_count = 0
+    killer_color = 'red'
+    
     for gen_info in generators_info:
         if gen_info['dimension'] == 0 and gen_info['birth_simplex'] is not None:
             # H0 generator
@@ -598,7 +610,7 @@ def create_essential_plots(angles, energies, persistence, simplex_tree=None, out
                               edgecolors='black', linewidth=1)
         
         elif gen_info['dimension'] == 1 and gen_info['birth_simplex'] is not None:
-            # H1 generator
+            # H1 generator (birth)
             h1_generator_count += 1
             vertices = gen_info['birth_simplex']
             max_energy_vertex = None
@@ -614,15 +626,47 @@ def create_essential_plots(angles, energies, persistence, simplex_tree=None, out
                         max_energy = energies[vertex_idx]
                         max_energy_vertex = vertex_idx
             
-            # Label the highest energy vertex
+            # Label the cycle birth
             if max_energy_vertex is not None:
-                ax1.annotate(f'H1-{h1_generator_count}', 
+                ax1.annotate(f'H1-{h1_generator_count} birth', 
                            xy=(angles[max_energy_vertex], energies[max_energy_vertex]),
                            xytext=(8, 12), textcoords='offset points',
-                           fontsize=10, fontweight='bold', color=h1_color,
+                           fontsize=9, fontweight='bold', color=h1_color,
                            bbox=dict(boxstyle='round,pad=0.3', facecolor='white', 
                                    edgecolor=h1_color, alpha=0.9),
                            arrowprops=dict(arrowstyle='->', color=h1_color, lw=1.5))
+            
+            # Highlight cycle killers (death)
+            if ('death_angles' in gen_info and gen_info['death_angles'] and 
+                gen_info['death'] != float('inf')):
+                
+                # Find the primary killer (highest energy death vertex)
+                if 'death_energies' in gen_info and gen_info['death_energies']:
+                    max_death_energy = max(gen_info['death_energies'])
+                    max_death_idx = gen_info['death_energies'].index(max_death_energy)
+                    killer_angle = gen_info['death_angles'][max_death_idx]
+                    
+                    # Find the index in the original data
+                    killer_data_idx = None
+                    for idx, angle in enumerate(angles):
+                        if abs(angle - killer_angle) < 1e-6:  # Find matching angle
+                            killer_data_idx = idx
+                            break
+                    
+                    if killer_data_idx is not None:
+                        # Highlight the killer conformation
+                        ax1.scatter(angles[killer_data_idx], energies[killer_data_idx], 
+                                  c=killer_color, s=120, marker='X', zorder=6,
+                                  edgecolors='black', linewidth=2)
+                        
+                        # Label the killer
+                        ax1.annotate(f'H1-{h1_generator_count} KILLER', 
+                                   xy=(angles[killer_data_idx], energies[killer_data_idx]),
+                                   xytext=(-8, -20), textcoords='offset points',
+                                   fontsize=9, fontweight='bold', color=killer_color,
+                                   bbox=dict(boxstyle='round,pad=0.3', facecolor='white', 
+                                           edgecolor=killer_color, alpha=0.9),
+                                   arrowprops=dict(arrowstyle='->', color=killer_color, lw=1.5))
     
     ax1.set_xlabel('Dihedral Angle (degrees)')
     ax1.set_ylabel('Relative Energy (Hartree)')
@@ -633,10 +677,18 @@ def create_essential_plots(angles, energies, persistence, simplex_tree=None, out
     legend_elements = [plt.Line2D([0], [0], color='k', linewidth=2, alpha=0.7, label='PES')]
     if any(g['dimension'] == 0 for g in generators_info):
         legend_elements.append(plt.scatter([], [], c=h0_color, s=100, marker='o', 
-                                         edgecolors='black', linewidth=1, label='H0 Generators'))
+                                         edgecolors='black', linewidth=1, label='H0 Birth'))
     if any(g['dimension'] == 1 for g in generators_info):
         legend_elements.append(plt.scatter([], [], c=h1_color, s=100, marker='s', 
-                                         edgecolors='black', linewidth=1, label='H1 Generators'))
+                                         edgecolors='black', linewidth=1, label='H1 Birth'))
+    
+    # Check if we have any cycle killers to add to legend
+    has_killers = any(g['dimension'] == 1 and 'death_angles' in g and g['death_angles'] and g['death'] != float('inf') 
+                     for g in generators_info)
+    if has_killers:
+        legend_elements.append(plt.scatter([], [], c=killer_color, s=120, marker='X', 
+                                         edgecolors='black', linewidth=2, label='H1 Killers'))
+    
     ax1.legend(handles=legend_elements, loc='upper right')
     
     # Plot 2: Persistence diagram
