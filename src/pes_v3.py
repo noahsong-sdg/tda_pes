@@ -39,7 +39,7 @@ from typing import List, Dict, Tuple, Optional, Union
 from data_structures import ConformerData, CalculationSettings
 from quantum import QuantumCalculator
 from conformer_rdkit import ConformerGeneratorRDKit
-from conformer_systematic import ConformerGeneratorSystematic
+from unused.conformer_systematic import ConformerGeneratorSystematic
 
 # Quantum chemistry
 try:
