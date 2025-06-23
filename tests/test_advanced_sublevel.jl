@@ -1,5 +1,5 @@
-include("src/ph/ph_core.jl")
-include("sublevel_advanced.jl")
+include("../src/ph/ph_core.jl")
+include("../src/sublevel_advanced.jl")
 
 """
 Test script for advanced sublevel filtration methods.
