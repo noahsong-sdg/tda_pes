@@ -5,19 +5,148 @@ ENV["GKSwstype"] = "100"  # For headless environments
 gr()  # Use GR backend which is more stable
 
 #=============================================================================
-    PERSISTENCE HOMOLOGY VISUALIZATION MODULE
+    STREAMLINED PERSISTENCE HOMOLOGY VISUALIZATION MODULE
     
-    This module contains all plotting and visualization functions:
-    - 1D, 2D, and multi-dimensional plotting
-    - Persistence diagrams and barcodes
-    - 3D manifold visualization
-    - Saddle point marking
+    Consolidated visualization functions with eliminated redundancies:
+    - Common persistence diagram and barcode plotting
+    - Unified layout and saving logic
+    - Specialized plots for 1D, 2D, and multi-dimensional data
+=============================================================================#
+
+#=============================================================================
+    CORE HELPER FUNCTIONS (ELIMINATE REDUNDANCIES)
+=============================================================================#
+
+function create_persistence_diagram(result, rel_energies::Vector{Float64})
+    """Create standard persistence diagram with H0/H1 features."""
+    p = plot(title="Persistence Diagram", xlabel="Birth", ylabel="Death", 
+             legend=:bottomright, show=false)
+    
+    # Plot H0 features (connected components) in red
+    if !isempty(result[1])
+        h0_births = [interval.birth for interval in result[1]]
+        h0_deaths = [isfinite(interval.death) ? interval.death : maximum(rel_energies) * 1.1 for interval in result[1]]
+        scatter!(p, h0_births, h0_deaths, color=:red, markersize=4, alpha=0.7, label="H0 (Components)")
+    end
+    
+    # Plot H1 features (cycles) in blue
+    h1_count = length(result) > 1 ? length(result[2]) : 0
+    if h1_count > 0
+        h1_births = [interval.birth for interval in result[2]]
+        h1_deaths = [isfinite(interval.death) ? interval.death : maximum(rel_energies) * 1.1 for interval in result[2]]
+        scatter!(p, h1_births, h1_deaths, color=:blue, markersize=4, alpha=0.7, label="H1 (Cycles)")
+    end
+    
+    # Add diagonal line y=x
+    max_val = maximum([maximum(rel_energies), 
+                      !isempty(result[1]) ? maximum([interval.birth for interval in result[1]]) : 0])
+    plot!(p, [0, max_val], [0, max_val], color=:gray, linestyle=:dash, alpha=0.5, label="y=x")
+    
+    return p
+end
+
+function create_barcode_plots(result)
+    """Create H0 and H1 barcode plots manually to avoid plotting recipe issues."""
+    h1_count = length(result) > 1 ? length(result[2]) : 0
+    
+    # Manual H0 barcode
+    p_h0 = plot(title="H0 Barcode (Components)", 
+                xlabel="Energy Threshold", ylabel="Feature Index", 
+                legend=false, show=false)
+    
+    for (i, interval) in enumerate(result[1])
+        birth = interval.birth
+        death = isfinite(interval.death) ? interval.death : interval.birth * 1.2 + 0.1
+        plot!(p_h0, [birth, death], [i, i], linewidth=3, color=:red, alpha=0.8)
+    end
+    
+    if h1_count > 0
+        # Manual H1 barcode
+        p_h1 = plot(title="H1 Barcode (Cycles)", 
+                    xlabel="Energy Threshold", ylabel="Feature Index", 
+                    legend=false, show=false)
+        
+        for (i, interval) in enumerate(result[2])
+            birth = interval.birth
+            death = isfinite(interval.death) ? interval.death : interval.birth * 1.2 + 0.1
+            plot!(p_h1, [birth, death], [i, i], linewidth=3, color=:blue, alpha=0.8)
+        end
+        return p_h0, p_h1, h1_count
+    else
+        return p_h0, nothing, h1_count
+    end
+end
+
+function combine_and_save_plots(plots::Vector, layout_type::String, output_name::String, 
+                               output_dir::String="figures")
+    """Combine plots with appropriate layout and save to file."""
+    
+    if layout_type == "1d"
+        if length(plots) == 4
+            # 4-plot: Energy profile, Persistence diagram, H0 barcode, H1 barcode
+            combined_plot = plot(plots[1], plots[2], plots[3], plots[4], 
+                               layout=(2,2), size=(1400, 800), show=false)
+            println("4-plot layout: Energy profile + persistence diagram + H0/H1 barcodes")
+        else
+            # 3-plot: Energy profile, Persistence diagram, H0 barcode
+            combined_plot = plot(plots[1], plots[2], plots[3], 
+                               layout=(2,2), size=(1300, 750), show=false)
+            println("3-plot layout: Energy profile + persistence diagram + H0 barcode")
+        end
+        
+    elseif layout_type == "2d"
+        if length(plots) == 5
+            # 5-plot: Large 3D manifold, 2D view, persistence diagram, H0 barcode, H1 barcode
+            l = @layout([a{0.5w,0.6h} b{0.5w,0.6h}; c{0.33w,0.4h} d{0.33w,0.4h} e{0.33w,0.4h}])
+            combined_plot = plot(plots[1], plots[2], plots[3], plots[4], plots[5], 
+                               layout=l, size=(1800, 1200), show=false)
+            println("5-plot layout: 3D manifold + 2D view + persistence diagram + H0/H1 barcodes")
+        else
+            # 4-plot: Large 3D manifold, 2D view, persistence diagram, H0 barcode
+            l = @layout([a{0.5w,0.6h} b{0.5w,0.6h}; c{0.5w,0.4h} d{0.5w,0.4h}])
+            combined_plot = plot(plots[1], plots[2], plots[3], plots[4], 
+                               layout=l, size=(1600, 1000), show=false)
+            println("4-plot layout: 3D manifold + 2D view + persistence diagram + H0 barcode")
+        end
+        
+    else # multid
+        if length(plots) == 4
+            # 4-plot: Energy profile, Persistence diagram, H0 barcode, H1 barcode
+            combined_plot = plot(plots[1], plots[2], plots[3], plots[4], 
+                               layout=(2,2), size=(1400, 800), show=false)
+            println("4-plot layout: Energy profile + persistence diagram + H0/H1 barcodes")
+        else
+            # 3-plot: Energy profile, Persistence diagram, H0 barcode
+            combined_plot = plot(plots[1], plots[2], plots[3], 
+                               layout=(2,2), size=(1200, 600), show=false)
+            println("3-plot layout: Energy profile + persistence diagram + H0 barcode")
+        end
+    end
+    
+    # Save plot
+    mkdir_if_not_exists(output_dir)
+    filename = "$(output_dir)/$(output_name).png"
+    savefig(combined_plot, filename)
+    println("Plot saved to $filename")
+    
+    return combined_plot
+end
+
+function mkdir_if_not_exists(dir_name::String)
+    """Create directory if it doesn't exist."""
+    if !isdir(dir_name)
+        mkdir(dir_name)
+    end
+end
+
+#=============================================================================
+    SPECIALIZED PLOTTING FUNCTIONS
 =============================================================================#
 
 function create_1d_plots(coordinates::Matrix{Float64}, rel_energies::Vector{Float64}, 
                          result, output_name::String="jl_test_1d")
-    """Create plots for 1D data analysis with generators visualization."""
-    println("Creating 1D plots with generators...")
+    """Create plots for 1D data analysis with representatives visualization."""
+    println("Creating 1D plots with representatives...")
     
     # We need to work with the ordered data for proper indexing
     ordered_energies, sorted_indices = project_to_1d_ordered(coordinates, rel_energies, "first_coordinate")
@@ -30,103 +159,76 @@ function create_1d_plots(coordinates::Matrix{Float64}, rel_energies::Vector{Floa
               linewidth=2, color=:black, alpha=0.7,
               show=false, legend=:topright)
     
-    # Plot representatives for each H0 interval using official Ripserer API
+    # Plot representatives and critical points
     colors = [:red, :blue, :green, :orange, :purple, :cyan]
     
-    # Get the infinite interval (essential component)
-    infinite_interval = nothing
-    finite_intervals = []
-    
-    for interval in result[1]
-        if !isfinite(interval)
-            infinite_interval = interval
-        else
-            push!(finite_intervals, interval)
-        end
-    end
-    
-    # Plot birth points (local minima) using birth_simplex
+    # Plot critical points (birth points = local minima)
     try
-        birth_indices = [only(Ripserer.birth_simplex(interval)) for interval in result[1]]
-        birth_coords = ordered_coords[birth_indices]
-        birth_energies = ordered_energies[birth_indices]
+        min_indices = [only(birth_simplex(interval)) for interval in result[1]]
+        min_coords = ordered_coords[min_indices]
+        min_energies = ordered_energies[min_indices]
         
-        scatter!(p1, birth_coords, birth_energies; 
-                color=1:length(birth_indices), markersize=8, markershape=:star5,
-                label="Birth Points (Minima)", show=false)
+        scatter!(p1, min_coords, min_energies; 
+                color=1:length(min_indices), markersize=8, markershape=:star5,
+                label="Critical Points (Minima)", show=false)
+        
+        println("  Found $(length(min_indices)) critical points")
     catch e
-        println("Could not plot birth points: $e")
+        # Fallback: mark global minimum
+        min_idx = argmin(ordered_energies)
+        scatter!(p1, [ordered_coords[min_idx]], [ordered_energies[min_idx]]; 
+                color=:red, markersize=8, markershape=:star5,
+                label="Global Minimum", show=false)
     end
     
-    # Plot saddle points (H0 death events and H1 birth events)
+    # Plot representatives as paths
     try
-        # H0 death events (saddle points where components merge)
-        h0_deaths = [interval.death for interval in result[1] if isfinite(interval.death)]
-        if !isempty(h0_deaths)
-            # Find approximate coordinates for saddle points (interpolation needed for exact location)
-            saddle_energies = h0_deaths
-            saddle_coords = [ordered_coords[argmin(abs.(ordered_energies .- energy))] for energy in saddle_energies]
-            
-            scatter!(p1, saddle_coords, saddle_energies; 
-                    color=:red, markersize=6, markershape=:diamond,
-                    label="H0 Saddle Points", show=false)
+        # Essential component
+        infinite_intervals = filter(!isfinite, result[1])
+        if !isempty(infinite_intervals)
+            infinite_interval = first(infinite_intervals)
+            plot!(p1, representative(infinite_interval), ordered_energies; 
+                  seriestype=:path, color=:black, linewidth=3, alpha=0.7,
+                  label="Essential Component", show=false)
         end
         
-        # H1 birth events (saddle points where cycles form)
-        h1_births = [interval.birth for interval in result[2]]
-        if !isempty(h1_births)
-            saddle_energies = h1_births
-            saddle_coords = [ordered_coords[argmin(abs.(ordered_energies .- energy))] for energy in saddle_energies]
-            
-            scatter!(p1, saddle_coords, saddle_energies; 
-                    color=:orange, markersize=6, markershape=:dtriangle,
-                    label="H1 Saddle Points", show=false)
+        # Finite components
+        finite_intervals = filter(isfinite, result[1])
+        if !isempty(finite_intervals)
+            sorted_intervals = sort(finite_intervals; by=birth)
+            for (i, interval) in enumerate(sorted_intervals)
+                rep_color = colors[((i-1) % length(colors)) + 1]
+                plot!(p1, interval, ordered_energies; 
+                      seriestype=:path, color=rep_color, linewidth=2, alpha=0.8,
+                      label="Component $i", show=false)
+            end
         end
     catch e
-        println("Could not plot saddle points: $e")
+        println("Could not plot representatives: $e")
     end
     
-    # Add energy threshold lines
-    births = [interval.birth for interval in result[1]]
-    deaths = [interval.death for interval in result[1] if isfinite(interval)]
-    thresholds = sort(unique(vcat(births, deaths)))
-    
-    for (i, threshold) in enumerate(thresholds[1:min(3, length(thresholds))])
-        hline!(p1, [threshold]; color=:gray, linestyle=:dash, alpha=0.5, 
-               linewidth=1, label="Threshold $(round(threshold, digits=4))", show=false)
-    end
-    
-    # Persistence diagram
-    p2 = plot(result, title="Persistence Diagram", 
-              markercolor=1:length(result[1]), markeralpha=1, show=false)
-    
-    # Check if we have H1 features to determine layout
-    h1_count = length(result[2])
-    
+    # Plot H1 cycles if they exist
+    h1_count = length(result) > 1 ? length(result[2]) : 0
     if h1_count > 0
-        # Create 4-plot layout for H0 and H1 features
-        println("H1 features detected - creating 4-plot layout")
-        
-        # H0 barcode
-        p3 = plot(result[1], title="H0 Barcode", plottype=:barcode, show=false)
-        
-        # H1 barcode and generators
-        p4 = plot(result[2], title="H1 Barcode", plottype=:barcode, show=false)
-        
-        # Combine all 4 plots: Energy profile with generators, H0 persistence, H0 barcode, H1 barcode
-        combined_plot = plot(p1, p2, p3, p4, layout=(2,2), size=(1400, 800), show=false)
-    else
-        # Standard 2-plot layout
-        combined_plot = plot(p1, p2, layout=(1,2), size=(1300, 750), show=false)
+        try
+            h1_births = [interval.birth for interval in result[2]]
+            h1_coords = [ordered_coords[argmin(abs.(ordered_energies .- energy))] for energy in h1_births]
+            
+            scatter!(p1, h1_coords, h1_births; 
+                    color=:orange, markersize=6, markershape=:dtriangle,
+                    label="H1 Birth Points (Cycles)", show=false)
+        catch e
+            println("Could not plot H1 birth points: $e")
+        end
     end
     
-    # Save plot
-    mkdir_if_not_exists("../figures")
-    filename = "../figures/$(output_name).png"
-    savefig(combined_plot, filename)
-    println("Plot saved to $filename")
+    # Create persistence diagram and barcodes using helper functions
+    p2 = create_persistence_diagram(result, rel_energies)
+    p3, p4, h1_count = create_barcode_plots(result)
     
-    return combined_plot
+    # Combine and save
+    plots = h1_count > 0 ? [p1, p2, p3, p4] : [p1, p2, p3]
+    return combine_and_save_plots(plots, "1d", output_name)
 end
 
 function create_2d_plots(coordinates::Matrix{Float64}, rel_energies::Vector{Float64}, 
@@ -134,45 +236,31 @@ function create_2d_plots(coordinates::Matrix{Float64}, rel_energies::Vector{Floa
     """Create plots for 2D data analysis with 3D manifold surface."""
     println("Creating 2D plots with 3D manifold surface...")
     
-    # Create 3D manifold surface using interpolation
-    println("Fitting 2D manifold to 3D points...")
-    
-    # Get coordinate ranges
+    # Get coordinate ranges and create interpolation grid
     coord1_vals = sort(unique(coordinates[:, 1]))
     coord2_vals = sort(unique(coordinates[:, 2]))
-    
-    # Create a finer grid for smooth surface
-    n_interp = 50  # Resolution of interpolated surface
+    n_interp = 50
     coord1_fine = range(minimum(coord1_vals), maximum(coord1_vals), length=n_interp)
     coord2_fine = range(minimum(coord2_vals), maximum(coord2_vals), length=n_interp)
     
-    # For irregular data, use scattered interpolation
+    # Create energy surface and 2D view
     if analysis_type == "1d_projection" || length(coord1_vals) * length(coord2_vals) != length(rel_energies)
-        # Use radial basis function interpolation for irregular data
-        println("Using RBF interpolation for irregular 2D data")
-        
-        # Simple distance-weighted interpolation
+        # Irregular data: use distance-weighted interpolation
         energy_surface = zeros(Float64, n_interp, n_interp)
-        
         for (i, x) in enumerate(coord1_fine), (j, y) in enumerate(coord2_fine)
-            # Distance-weighted interpolation
             weights = 1.0 ./ (sqrt.((coordinates[:, 1] .- x).^2 + (coordinates[:, 2] .- y).^2) .+ 1e-6)
             weights = weights ./ sum(weights)
             energy_surface[i, j] = sum(weights .* rel_energies)
         end
         
         # 2D scatter plot  
-        p1 = scatter(coordinates[:, 1], coordinates[:, 2], 
+        p2 = scatter(coordinates[:, 1], coordinates[:, 2], 
                      marker_z=rel_energies, c=:viridis,
                      xlabel="Dihedral 1 (degrees)", ylabel="Dihedral 2 (degrees)", 
-                     title="2D Energy Scatter", 
-                     colorbar_title="Energy (Hartree)", 
+                     title="2D Energy Scatter", colorbar_title="Energy (Hartree)", 
                      markersize=4, show=false)
     else
         # Regular grid data
-        println("Using grid interpolation for regular 2D data")
-        
-        # Create energy grid for existing data
         coord1_map = Dict(val => i for (i, val) in enumerate(coord1_vals))
         coord2_map = Dict(val => i for (i, val) in enumerate(coord2_vals))
         
@@ -183,63 +271,37 @@ function create_2d_plots(coordinates::Matrix{Float64}, rel_energies::Vector{Floa
             energy_grid[row, col] = rel_energies[i]
         end
         
-        # Interpolate to finer grid (simple bilinear for now)
+        # Simple interpolation to finer grid
         energy_surface = zeros(Float64, n_interp, n_interp)
         for (i, x) in enumerate(coord1_fine), (j, y) in enumerate(coord2_fine)
-            # Find closest grid points and interpolate
             x_idx = argmin(abs.(coord1_vals .- x))
             y_idx = argmin(abs.(coord2_vals .- y))
             energy_surface[i, j] = energy_grid[x_idx, y_idx]
         end
         
         # 2D heatmap
-        p1 = heatmap(coord1_vals, coord2_vals, energy_grid', 
+        p2 = heatmap(coord1_vals, coord2_vals, energy_grid', 
                      xlabel="Dihedral 1 (degrees)", ylabel="Dihedral 2 (degrees)", 
-                     title="2D Energy Heatmap", 
-                     color=:viridis, show=false)
+                     title="2D Energy Heatmap", color=:viridis, show=false)
     end
     
-    # Create 3D surface plot (the manifold!)
-    p2 = surface(coord1_fine, coord2_fine, energy_surface', 
+    # Create 3D surface plot
+    p1 = surface(coord1_fine, coord2_fine, energy_surface', 
                  xlabel="Dihedral 1 (degrees)", ylabel="Dihedral 2 (degrees)", 
-                 zlabel="Energy (Hartree)", 
-                 title="3D Energy Manifold", 
+                 zlabel="Energy (Hartree)", title="3D Energy Manifold", 
                  color=:viridis, show=false, camera=(45, 60))
     
     # Add original data points to 3D plot
-    scatter!(p2, coordinates[:, 1], coordinates[:, 2], rel_energies,
+    scatter!(p1, coordinates[:, 1], coordinates[:, 2], rel_energies,
              markersize=3, color=:red, alpha=0.8, label="Data Points", show=false)
     
-    # Persistence diagram
-    p3 = plot(result, title="Persistence Diagram", show=false)
+    # Create persistence diagram and barcodes using helper functions
+    p3 = create_persistence_diagram(result, rel_energies)
+    p4, p5, h1_count = create_barcode_plots(result)
     
-    # Check if we have H1 features to determine layout
-    h1_count = length(result[2])
-    
-    if h1_count > 0
-        # Create 4-plot layout for H0 and H1 features with manifold
-        println("H1 features detected - creating 4-plot layout with manifold")
-        
-        # H0 barcode
-        p4 = plot(result[1], title="H0 Barcode", plottype=:barcode, show=false)
-        
-        # Custom layout: Large 3D manifold on top, smaller plots below
-        l = @layout([a{0.6w,0.6h} b{0.4w,0.6h}; c{0.5w,0.4h} d{0.5w,0.4h}])
-        combined_plot = plot(p2, p1, p3, p4, layout=l, size=(1600, 1200), show=false)
-    else
-        # Custom layout: Large 3D manifold with smaller 2D and persistence plots
-        println("Creating layout with large 3D manifold")
-        l = @layout([a{0.6w} [b{0.5h}; c{0.5h}]])
-        combined_plot = plot(p2, p1, p3, layout=l, size=(1600, 800), show=false)
-    end
-    
-    # Save plot
-    mkdir_if_not_exists("figures")
-    filename = "figures/$(output_name).png"
-    savefig(combined_plot, filename)
-    println("Plot saved to $filename")
-    
-    return combined_plot
+    # Combine and save
+    plots = h1_count > 0 ? [p1, p2, p3, p4, p5] : [p1, p2, p3, p4]
+    return combine_and_save_plots(plots, "2d", output_name)
 end
 
 function create_multid_plots(coordinates::Matrix{Float64}, rel_energies::Vector{Float64}, 
@@ -251,44 +313,13 @@ function create_multid_plots(coordinates::Matrix{Float64}, rel_energies::Vector{
     p1 = plot(1:length(rel_energies), rel_energies, 
               xlabel="Point Index", ylabel="Relative Energy (Hartree)", 
               title="Multi-D Energy Profile", 
-              linewidth=2, marker=:circle, markersize=3,
-              show=false)
+              linewidth=2, marker=:circle, markersize=3, show=false)
     
-    # Persistence diagram
-    p2 = plot(result, title="Persistence Diagram", show=false)
+    # Create persistence diagram and barcodes using helper functions
+    p2 = create_persistence_diagram(result, rel_energies)
+    p3, p4, h1_count = create_barcode_plots(result)
     
-    # Check if we have H1 features to determine layout
-    h1_count = length(result[2])
-    
-    if h1_count > 0
-        # Create 4-plot layout for H0 and H1 features
-        println("H1 features detected - creating 4-plot layout")
-        
-        # H0 barcode
-        p3 = plot(result[1], title="H0 Barcode", plottype=:barcode, show=false)
-        
-        # H1 barcode and generators
-        p4 = plot(result[2], title="H1 Barcode", plottype=:barcode, show=false)
-        
-        # Combine all 4 plots: Energy profile, H0 persistence, H0 barcode, H1 barcode
-        combined_plot = plot(p1, p2, p3, p4, layout=(2,2), size=(1400, 800), show=false)
-    else
-        # Standard 2-plot layout
-        combined_plot = plot(p1, p2, layout=(1,2), size=(1200, 500), show=false)
-    end
-    
-    # Save plot
-    mkdir_if_not_exists("figures")
-    filename = "figures/$(output_name).png"
-    savefig(combined_plot, filename)
-    println("Plot saved to $filename")
-    
-    return combined_plot
+    # Combine and save
+    plots = h1_count > 0 ? [p1, p2, p3, p4] : [p1, p2, p3]
+    return combine_and_save_plots(plots, "multid", output_name)
 end
-
-function mkdir_if_not_exists(dir_name::String)
-    """Create directory if it doesn't exist."""
-    if !isdir(dir_name)
-        mkdir(dir_name)
-    end
-end 

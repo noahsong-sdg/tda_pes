@@ -1,12 +1,13 @@
-using Ripserer, DelimitedFiles
+using Ripserer, DelimitedFiles, Statistics
+include("ph_rbf.jl")
 
 #=============================================================================
     CORE PERSISTENCE HOMOLOGY COMPUTATION MODULE
     
-    This module contains only the essential persistence computation functions:
+    Streamlined persistence computation for potential energy surfaces:
     - Data loading from PES files
-    - Persistence homology computation
-    - Basic data projection methods
+    - Two main methods: Cubical (direct/interpolated) and Rips complex
+    - Automatic method selection based on data structure
 =============================================================================#
 
 #=============================================================================
@@ -80,71 +81,12 @@ function load_pes_data(filename::String; coordinate_names::Union{Vector{String},
 end
 
 #=============================================================================
-    PERSISTENCE COMPUTATION FUNCTIONS
+    UTILITY FUNCTIONS
 =============================================================================#
 
-function compute_cubical_persistence(energies::Union{Vector{Float64}, Matrix{Float64}}, description::String="")
-    """Core function to compute persistence homology using Cubical complex."""
-    result = ripserer(Cubical(energies), reps=true)
-    return result
-end
-
-function compute_rips_persistence(coordinates::Matrix{Float64}, rel_energies::Vector{Float64}, description::String="")
-    """Compute persistence homology using Rips complex for irregular point clouds."""
-    println("Computing Rips complex persistence for irregular data...")
-    
-    # For Rips complex, we need distance matrix between points
-    # Add energy as an extra dimension (scaled appropriately)
-    energy_scale = 0.1  # Scale factor for energy relative to coordinates
-    scaled_energies = rel_energies * energy_scale
-    
-    # Combine coordinates with scaled energy
-    augmented_coords = hcat(coordinates, scaled_energies)
-    
-    # Compute Rips complex
-    result = ripserer(augmented_coords, dim_max=2, reps=true)
-    
-    println("  $(description)")
-    println("  Points: $(size(coordinates, 1))")
-    println("  Dimensions: $(size(coordinates, 2)) + energy")
-    
-    return result
-end
-
-function compute_alpha_persistence(coordinates::Matrix{Float64}, rel_energies::Vector{Float64}, description::String="")
-    """Compute persistence homology using Alpha complex for irregular point clouds."""
-    println("Computing Alpha complex persistence for irregular data...")
-    
-    # Alpha complexes work better for geometric data
-    # But Ripserer may not have direct Alpha support - use Rips as fallback
-    return compute_rips_persistence(coordinates, rel_energies, description)
-end
-
-function compute_sublevel_filtration(coordinates::Matrix{Float64}, rel_energies::Vector{Float64}, description::String="")
-    """Compute sublevel filtration by energy threshold."""
-    println("Computing sublevel filtration for irregular data...")
-    
-    # Sort energies to create filtration sequence
-    sorted_indices = sortperm(rel_energies)
-    sorted_energies = rel_energies[sorted_indices]
-    sorted_coords = coordinates[sorted_indices, :]
-    
-    # Build point cloud with energy-based filtration
-    # This creates a sequence of point clouds as energy threshold increases
-    
-    # For now, use Rips complex as a proxy
-    # In full implementation, you'd build proper sublevel sets
-    result = compute_rips_persistence(sorted_coords, sorted_energies, description)
-    
-    return result
-end
-
-function project_to_1d_ordered(coordinates::Matrix{Float64}, rel_energies::Vector{Float64}, method::String="coordinate_sum")
+function project_to_1d_ordered(coordinates::Matrix{Float64}, rel_energies::Vector{Float64}, method::String="first_coordinate")
     """Project multi-dimensional data to 1D with proper ordering."""
-    if method == "coordinate_sum"
-        # Order by sum of coordinates (good for general multi-D data)
-        sorted_indices = sortperm(vec(sum(coordinates, dims=2)))
-    elseif method == "first_coordinate"
+    if method == "first_coordinate"
         # Order by first coordinate (good for 1D data)
         sorted_indices = sortperm(coordinates[:, 1])
     else
@@ -154,16 +96,37 @@ function project_to_1d_ordered(coordinates::Matrix{Float64}, rel_energies::Vecto
     return rel_energies[sorted_indices], sorted_indices
 end
 
-function compute_2d_grid_persistence(coordinates::Matrix{Float64}, rel_energies::Vector{Float64})
-    """Compute persistence for 2D data - try grid first, fallback to point cloud methods."""
-    println("Analyzing 2D data structure...")
+function is_regular_grid(coordinates::Matrix{Float64})
+    """Check if coordinates form a regular grid structure."""
+    n_dims = size(coordinates, 2)
     
-    # Detect grid structure
-    coord1_vals = sort(unique(coordinates[:, 1]))  
-    coord2_vals = sort(unique(coordinates[:, 2]))
+    if n_dims == 1
+        # For 1D: check if regularly spaced
+        coord_diffs = diff(sort(coordinates[:, 1]))
+        return all(abs.(coord_diffs .- coord_diffs[1]) .< 1e-6)
+    elseif n_dims == 2
+        # For 2D: check if forms complete grid
+        coord1_vals = sort(unique(coordinates[:, 1]))
+        coord2_vals = sort(unique(coordinates[:, 2]))
+        return length(coord1_vals) * length(coord2_vals) == size(coordinates, 1)
+    else
+        # For higher dimensions: assume irregular (could be extended)
+        return false
+    end
+end
+
+function create_grid_from_coordinates(coordinates::Matrix{Float64}, rel_energies::Vector{Float64})
+    """Convert regular coordinate data to grid format for cubical complex."""
+    n_dims = size(coordinates, 2)
     
-    if length(coord1_vals) * length(coord2_vals) == length(rel_energies)
-        println("Regular 2D grid detected: $(length(coord1_vals)) × $(length(coord2_vals))")
+    if n_dims == 1
+        # 1D: sort by coordinate
+        ordered_energies, _ = project_to_1d_ordered(coordinates, rel_energies)
+        return ordered_energies
+    elseif n_dims == 2
+        # 2D: create energy grid
+        coord1_vals = sort(unique(coordinates[:, 1]))
+        coord2_vals = sort(unique(coordinates[:, 2]))
         
         # Create mapping from coordinates to grid indices
         coord1_map = Dict(val => i for (i, val) in enumerate(coord1_vals))
@@ -177,49 +140,110 @@ function compute_2d_grid_persistence(coordinates::Matrix{Float64}, rel_energies:
             energy_grid[row, col] = rel_energies[i]
         end
         
-        result = compute_cubical_persistence(energy_grid, "2D grid")
-        return result, "2d_grid"
+        return energy_grid
     else
-        println("Irregular 2D data - using Rips complex for point cloud")
-        result = compute_rips_persistence(coordinates, rel_energies, "2D irregular point cloud")
-        return result, "2d_rips"
+        error("Grid creation only supported for 1D and 2D regular data")
     end
 end
 
-function compute_persistence(coordinates::Matrix{Float64}, rel_energies::Vector{Float64})
-    """Main persistence computation dispatcher - handles regular grids and irregular point clouds."""
+#=============================================================================
+    CORE PERSISTENCE COMPUTATION FUNCTIONS
+=============================================================================#
+
+function compute_cubical_persistence(energies::Union{Vector{Float64}, Matrix{Float64}}, description::String="")
+    """Core function to compute persistence homology using Cubical complex."""
+    println("Computing cubical persistence with representatives...")
+    result = ripserer(Cubical(energies), reps=true)
+    println("  $(description)")
+    return result
+end
+
+function compute_rips_persistence(coordinates::Matrix{Float64}, rel_energies::Vector{Float64}, description::String="")
+    """Compute persistence homology using Rips complex with energy augmentation."""
+    println("Computing Rips complex persistence...")
+    
+    # Add energy as an extra dimension (scaled appropriately)
+    energy_scale = 0.1  # Scale factor for energy relative to coordinates
+    scaled_energies = rel_energies * energy_scale
+    
+    # Combine coordinates with scaled energy
+    augmented_coords = hcat(coordinates, scaled_energies)
+    
+    # Compute Rips complex
+    result = ripserer(augmented_coords, dim_max=2, reps=true)
+    
+    println("  $(description)")
+    println("  Points: $(size(coordinates, 1)), Dimensions: $(size(coordinates, 2)) + energy")
+    
+    return result
+end
+
+function compute_interpolated_cubical_persistence(coordinates::Matrix{Float64}, rel_energies::Vector{Float64},
+                                                grid_resolution::Union{Vector{Int}, Nothing}=nothing)
+    """Compute cubical persistence on interpolated regular grid from irregular data."""
+    
+    println("Computing interpolated cubical persistence...")
+    
+    # Interpolate to regular grid using RBF module
+    energy_grid, grid_axes, grid_points = interpolate_to_regular_grid(coordinates, rel_energies, grid_resolution)
+    
+    # Compute cubical persistence on the interpolated grid
+    result = compute_cubical_persistence(energy_grid, "Interpolated $(size(coordinates,2))D grid")
+    
+    return result, energy_grid, grid_axes, grid_points
+end
+
+#=============================================================================
+    MAIN PERSISTENCE COMPUTATION DISPATCHER
+=============================================================================#
+
+function compute_persistence(coordinates::Matrix{Float64}, rel_energies::Vector{Float64}, 
+                           method::String="auto")
+    """Main persistence computation dispatcher.
+    
+    Methods:
+    - 'auto': Automatic method selection (recommended)
+    - 'interpolated_cubical': RBF interpolation + cubical complex 
+    - 'cubical': Direct cubical complex (only for regular grids)
+    - 'rips': Rips complex with energy augmentation
+    """
     n_dimensions = size(coordinates, 2)
     n_points = size(coordinates, 1)
     
     println("Data analysis:")
-    println("  Points: $n_points")
-    println("  Dimensions: $n_dimensions")
+    println("  Points: $n_points, Dimensions: $n_dimensions, Method: $method")
     
-    if n_dimensions == 1
-        # For 1D data, check if regularly spaced
-        coord_diffs = diff(sort(coordinates[:, 1]))
-        is_regular = all(abs.(coord_diffs .- coord_diffs[1]) .< 1e-6)
+    if method == "interpolated_cubical"
+        # Use RBF interpolation + cubical complex for any data
+        result, energy_grid, grid_axes, grid_points = compute_interpolated_cubical_persistence(coordinates, rel_energies)
+        return result, "interpolated_cubical"
         
-        if is_regular
-            println("Regular 1D spacing detected - using cubical complex")
-            ordered_energies, _ = project_to_1d_ordered(coordinates, rel_energies, "first_coordinate")
-            result = compute_cubical_persistence(ordered_energies, "1D coordinate-ordered")
-            return result, "1d"
-        else
-            println("Irregular 1D spacing - using Rips complex")
-            result = compute_rips_persistence(coordinates, rel_energies, "1D irregular")
-            return result, "1d_rips"
+    elseif method == "cubical"
+        # Direct cubical - only for regular grids
+        if !is_regular_grid(coordinates)
+            error("Data is not regularly gridded - cannot use direct cubical method. Use 'interpolated_cubical' instead.")
         end
         
-    elseif n_dimensions == 2
-        # For 2D, try grid structure first, then point cloud methods
-        result, grid_type = compute_2d_grid_persistence(coordinates, rel_energies)
-        return result, grid_type
+        energy_grid = create_grid_from_coordinates(coordinates, rel_energies)
+        result = compute_cubical_persistence(energy_grid, "$(n_dimensions)D regular grid")
+        return result, "cubical"
         
-    else
-        # For higher dimensions, always use point cloud methods for irregular data
-        println("Multi-dimensional data ($(n_dimensions)D) - using Rips complex")
-        result = compute_rips_persistence(coordinates, rel_energies, "$(n_dimensions)D point cloud")
-        return result, "multid_rips"
+    elseif method == "rips"
+        # Rips complex with energy augmentation
+        result = compute_rips_persistence(coordinates, rel_energies, "$(n_dimensions)D Rips complex")
+        return result, "rips"
+        
+    else  # method == "auto"
+        # Automatic method selection
+        if is_regular_grid(coordinates)
+            println("Regular grid detected - using direct cubical complex")
+            energy_grid = create_grid_from_coordinates(coordinates, rel_energies)
+            result = compute_cubical_persistence(energy_grid, "$(n_dimensions)D regular grid")
+            return result, "cubical"
+        else
+            println("Irregular data detected - using interpolated cubical complex")
+            result, energy_grid, grid_axes, grid_points = compute_interpolated_cubical_persistence(coordinates, rel_energies)
+            return result, "interpolated_cubical"
+        end
     end
 end 
