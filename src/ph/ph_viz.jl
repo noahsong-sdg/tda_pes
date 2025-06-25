@@ -78,7 +78,7 @@ function create_barcode_plots(result)
 end
 
 function combine_and_save_plots(plots::Vector, layout_type::String, output_name::String, 
-                               output_dir::String="figures")
+                               output_dir::String="../../figures")
     """Combine plots with appropriate layout and save to file."""
     
     if layout_type == "1d"
@@ -123,7 +123,7 @@ function combine_and_save_plots(plots::Vector, layout_type::String, output_name:
         end
     end
     
-    # Save plot
+    # Save plot to main figures directory
     mkdir_if_not_exists(output_dir)
     filename = "$(output_dir)/$(output_name).png"
     savefig(combined_plot, filename)
@@ -181,30 +181,34 @@ function create_1d_plots(coordinates::Matrix{Float64}, rel_energies::Vector{Floa
                 label="Global Minimum", show=false)
     end
     
-    # Plot representatives as paths
+    # Simplified representatives plotting - just mark birth/death points
     try
-        # Essential component
-        infinite_intervals = filter(!isfinite, result[1])
-        if !isempty(infinite_intervals)
-            infinite_interval = first(infinite_intervals)
-            plot!(p1, representative(infinite_interval), ordered_energies; 
-                  seriestype=:path, color=:black, linewidth=3, alpha=0.7,
-                  label="Essential Component", show=false)
-        end
-        
-        # Finite components
-        finite_intervals = filter(isfinite, result[1])
-        if !isempty(finite_intervals)
-            sorted_intervals = sort(finite_intervals; by=birth)
-            for (i, interval) in enumerate(sorted_intervals)
-                rep_color = colors[((i-1) % length(colors)) + 1]
-                plot!(p1, interval, ordered_energies; 
-                      seriestype=:path, color=rep_color, linewidth=2, alpha=0.8,
-                      label="Component $i", show=false)
+        for (i, interval) in enumerate(result[1])
+            birth_energy = interval.birth
+            death_energy = isfinite(interval.death) ? interval.death : maximum(ordered_energies)
+            
+            # Find closest coordinates for birth/death energies
+            birth_idx = argmin(abs.(ordered_energies .- birth_energy))
+            birth_coord = ordered_coords[birth_idx]
+            
+            # Mark birth point
+            scatter!(p1, [birth_coord], [birth_energy]; 
+                    color=colors[((i-1) % length(colors)) + 1], 
+                    markersize=6, markershape=:circle, alpha=0.8,
+                    label=i==1 ? "Birth Points" : "", show=false)
+            
+            # Mark death point if finite
+            if isfinite(interval.death)
+                death_idx = argmin(abs.(ordered_energies .- death_energy))
+                death_coord = ordered_coords[death_idx]
+                scatter!(p1, [death_coord], [death_energy]; 
+                        color=colors[((i-1) % length(colors)) + 1], 
+                        markersize=4, markershape=:x, alpha=0.6,
+                        label=i==1 ? "Death Points" : "", show=false)
             end
         end
     catch e
-        println("Could not plot representatives: $e")
+        println("Could not plot birth/death points: $e")
     end
     
     # Plot H1 cycles if they exist
